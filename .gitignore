@@ -1,0 +1,18 @@
+# Database credentials and local environment files
+private-osm-config.php
+private-osm-test-config.php
+**/private-osm-config.php
+**/private-osm-test-config.php
+.env
+.env.*
+!.env.example
+*:Zone.Identifier
+
+# Codex/local workspace metadata
+.agents/
+.codex/
+
+# Runtime and OS-generated files
+*.log
+.DS_Store
+Thumbs.db

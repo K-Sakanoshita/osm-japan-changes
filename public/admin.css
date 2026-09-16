@@ -1,0 +1,184 @@
+.admin-page {
+  margin: 0;
+  background: #f4f7f5;
+  color: #20332d;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.6
+}
+
+
+.admin-page *,
+.admin-page *::before,
+.admin-page *::after {
+  box-sizing: border-box
+}
+
+
+.admin-page main {
+  width: min(920px, calc(100% - 32px));
+  margin: 36px auto
+}
+
+
+.admin-page h1,
+.admin-page h2,
+.admin-page p {
+  margin-top: 0
+}
+
+
+.admin-page h1 {
+  font-size: 28px
+}
+
+
+.admin-page h2 {
+  color: #155e4a;
+  font-size: 18px
+}
+
+
+.admin-card {
+  margin: 16px 0;
+  padding: 22px;
+  border: 1px solid #dce8e2;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 3px 14px rgb(26 72 59 / 7%)
+}
+
+
+.admin-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px
+}
+
+
+.admin-summary div {
+  min-width: 0;
+  padding: 14px;
+  border-radius: 10px;
+  background: #edf7f2
+}
+
+
+.admin-summary strong,
+.admin-summary span {
+  display: block
+}
+
+
+.admin-summary strong {
+  overflow-wrap: anywhere;
+  font-size: 22px
+}
+
+
+.admin-summary span {
+  margin-top: 3px;
+  color: #64766f;
+  font-size: 12px
+}
+
+
+.admin-notice {
+  padding: 12px;
+  border-radius: 9px;
+  background: #e7f6ee;
+  color: #12634f
+}
+
+
+.admin-notice.is-error {
+  background: #fff0f0;
+  color: #9b2424
+}
+
+
+.admin-definitions {
+  width: 100%;
+  border-collapse: collapse
+}
+
+
+.admin-definitions th,
+.admin-definitions td {
+  padding: 9px;
+  border-bottom: 1px solid #e4ece8;
+  text-align: left
+}
+
+
+.admin-definitions th:last-child,
+.admin-definitions td:last-child {
+  text-align: right
+}
+
+
+.admin-page label {
+  display: block;
+  margin: 16px 0;
+  font-weight: 700
+}
+
+
+.admin-page button {
+  padding: 11px 17px;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+  color: #fff;
+  font: inherit;
+  font-weight: 700
+}
+
+
+.admin-primary-button {
+  background: #16856b
+}
+
+
+.admin-primary-button:hover {
+  background: #106b56
+}
+
+
+.admin-danger-button {
+  background: #a63232
+}
+
+
+.admin-danger-button:hover {
+  background: #842727
+}
+
+
+.admin-result {
+  margin-top: 18px;
+  padding: 13px;
+  border: 1px solid #cbdcd4;
+  border-radius: 9px;
+  background: #f5faf7
+}
+
+
+.admin-result strong {
+  display: block;
+  margin-bottom: 7px;
+  color: #155e4a
+}
+
+
+.admin-result pre {
+  overflow: auto;
+  margin: 0;
+  color: #40564e;
+  font: 12px/1.55 ui-monospace, monospace;
+  white-space: pre-wrap
+}
+
+
+.admin-page>main>small {
+  color: #687a73
+}

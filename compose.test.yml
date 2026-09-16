@@ -1,0 +1,46 @@
+name: osm-japan-changes-test
+
+services:
+  database:
+    build:
+      context: .
+      dockerfile: docker/test-db/Dockerfile
+    command:
+      - --max-allowed-packet=1G
+      - --net-read-timeout=600
+      - --net-write-timeout=600
+    environment:
+      MARIADB_DATABASE: osm_whatnew
+      MARIADB_USER: osm
+      MARIADB_PASSWORD: osm-local-test
+      MARIADB_ROOT_PASSWORD: osm-local-root
+    ports:
+      - "127.0.0.1:${MYSQL_PORT:-3307}:3306"
+    volumes:
+      - test-database:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  phpmyadmin:
+    image: phpmyadmin:5.2-apache
+    environment:
+      PMA_HOST: database
+      PMA_PORT: 3306
+      PMA_USER: osm
+      PMA_PASSWORD: osm-local-test
+      UPLOAD_LIMIT: 1G
+      MEMORY_LIMIT: 1G
+      MAX_EXECUTION_TIME: 0
+    ports:
+      - "127.0.0.1:${PHPMYADMIN_PORT:-8081}:80"
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  test-database:
