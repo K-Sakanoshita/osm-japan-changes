@@ -1,6 +1,11 @@
 <?php
 declare(strict_types=1);
 
+if (PHP_SAPI === 'cli') {
+    fwrite(STDERR, "admin.php is a web page. Open it over HTTPS in a browser.\n");
+    exit(1);
+}
+
 header('Cache-Control: no-store, private');
 header('X-Robots-Tag: noindex, nofollow');
 header('X-Content-Type-Options: nosniff');

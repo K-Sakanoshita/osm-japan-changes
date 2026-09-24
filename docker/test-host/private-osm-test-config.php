@@ -12,6 +12,7 @@ return [
     'osm_api' => 'https://api.openstreetmap.org/api/0.6',
     'osm_user_agent' => 'osm-japan-changes/1.0 local-test',
     'osm_full_max_bytes' => 2 * 1024 * 1024,
+    'profile_avatar_refresh_limit' => 200,
     'bbox' => '122.0,20.0,154.0,46.0',
     'cors' => [
         'allowed_origins' => ['*'],

@@ -31,7 +31,9 @@ cp private-osm-config.example.php private-osm-config.php
 php -r "echo password_hash('管理用パスワード', PASSWORD_DEFAULT), PHP_EOL;"
 ```
 
-設定ファイルを別の場所に置く場合は、`OSM_APP_CONFIG`へ絶対パスを指定します。`cors.allowed_origins`の初期例は、公開読み取りAPIとして全Originを許可する `*` です。配信元を限定する場合は、次のように完全なOriginを列挙します。
+本番で `public/` の内容を `/home/armd-01/www/osm-japan-changes/` に配置する場合、設定ファイルはWeb公開ディレクトリの外にある `/home/armd-01/private-osm-config.php` から読み込みます。ローカル開発ではリポジトリ直下の `private-osm-config.php` を使用します。別の場所に置く場合は、`OSM_APP_CONFIG`へ絶対パスを指定します。
+
+`cors.allowed_origins`の初期例は、公開読み取りAPIとして全Originを許可する `*` です。配信元を限定する場合は、次のように完全なOriginを列挙します。
 
 ```php
 'cors' => [
@@ -149,7 +151,7 @@ APIのポートを変更した場合、テストにも `API_URL=http://127.0.0.1
 
 ## 管理画面
 
-`public/admin.php`はBasic認証とCSRF対策を備え、プロフィール再集計とバッジ条件の反映を実行します。本番では必ずHTTPSで公開し、設定の `admin.password_hash`には `password_hash()`の出力だけを保存してください。
+`public/admin.php`はBasic認証とCSRF対策を備え、プロフィール再集計とバッジ条件の反映を実行します。CLI用スクリプトではないため、`php admin.php`ではなくHTTPSのURLをブラウザで開いてください。本番では必ずHTTPSで公開し、設定の `admin.password_hash`には `password_hash()`の出力だけを保存してください。
 
 ## 主なファイル
 
