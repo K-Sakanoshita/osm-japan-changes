@@ -120,20 +120,53 @@ refresh_test_profiles() {
         php "${DOCUMENT_ROOT}/profile-sync.php"
 }
 
+is_managed_web_pid() {
+    local pid="$1"
+    [[ "${pid}" =~ ^[0-9]+$ && -r "/proc/${pid}/cmdline" ]] || return 1
+    local -a args=()
+    mapfile -d '' -t args <"/proc/${pid}/cmdline"
+    [[ "${args[0]:-}" == */php
+        && "${args[1]:-}" == '-S'
+        && "${args[2]:-}" == *":${WEB_PORT}"
+        && "${args[3]:-}" == '-t' ]] || return 1
+    [[ "$(readlink -f -- "${args[4]:-}")" == "$(readlink -f -- "${DOCUMENT_ROOT}")" ]] || return 1
+    local configured_path
+    configured_path="$(tr '\0' '\n' <"/proc/${pid}/environ" | sed -n 's/^OSM_APP_CONFIG=//p' | head -n 1)"
+    [[ -n "${configured_path}" \
+        && "$(readlink -f -- "${configured_path}")" == "$(readlink -f -- "${APP_CONFIG}")" ]]
+}
+
+web_pid() {
+    local pid
+    if [[ -f "${WEB_PID_FILE}" ]]; then
+        pid="$(<"${WEB_PID_FILE}")"
+        if is_managed_web_pid "${pid}"; then
+            printf '%s\n' "${pid}"
+            return 0
+        fi
+    fi
+    # Recover a server started by this script when its PID file was lost.
+    command -v ss >/dev/null 2>&1 || return 1
+    while read -r pid; do
+        if is_managed_web_pid "${pid}"; then
+            printf '%s\n' "${pid}"
+            return 0
+        fi
+    done < <(ss -ltnp "sport = :${WEB_PORT}" 2>/dev/null \
+        | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)
+    return 1
+}
+
 web_is_running() {
-    [[ -f "${WEB_PID_FILE}" ]] || return 1
-    local pid command_line
-    pid="$(<"${WEB_PID_FILE}")"
-    [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
-    kill -0 "${pid}" 2>/dev/null || return 1
-    [[ -r "/proc/${pid}/cmdline" ]] || return 1
-    command_line="$(tr '\0' ' ' <"/proc/${pid}/cmdline")"
-    [[ "${command_line}" == *"php"* && "${command_line}" == *"${DOCUMENT_ROOT}"* ]]
+    web_pid >/dev/null
 }
 
 start_web() {
-    if web_is_running; then
-        info "Webサーバーは起動済みです（PID $(<"${WEB_PID_FILE}")）。"
+    local pid
+    if pid="$(web_pid)"; then
+        mkdir -p "${RUNTIME_DIR}"
+        printf '%s\n' "${pid}" >"${WEB_PID_FILE}"
+        info "Webサーバーは起動済みです（PID ${pid}）。"
         return
     fi
     mkdir -p "${RUNTIME_DIR}"
@@ -182,14 +215,12 @@ wait_for_web() {
 }
 
 stop_web() {
-    if ! web_is_running; then
+    local pid attempt
+    if ! pid="$(web_pid)"; then
         rm -f "${WEB_PID_FILE}"
         info "Webサーバーは起動していません。"
         return
     fi
-
-    local pid attempt
-    pid="$(<"${WEB_PID_FILE}")"
     kill "${pid}"
     for attempt in {1..20}; do
         kill -0 "${pid}" 2>/dev/null || break
@@ -205,6 +236,10 @@ stop_web() {
 start_environment() {
     require_environment
     validate_settings
+    if ! web_is_running && command -v ss >/dev/null 2>&1 \
+        && ss -ltn "sport = :${WEB_PORT}" 2>/dev/null | tail -n +2 | grep -q .; then
+        fail "${WEB_HOST}:${WEB_PORT} は既に使用されています。WEB_PORTを変更してください。"
+    fi
     compose up --detach --build --wait database phpmyadmin
     prepare_test_database
     refresh_test_profiles
@@ -231,8 +266,9 @@ stop_environment() {
 
 show_status() {
     require_environment
-    if web_is_running; then
-        info "Web: running (PID $(<"${WEB_PID_FILE}"), bind ${WEB_HOST}:${WEB_PORT})"
+    local pid
+    if pid="$(web_pid)"; then
+        info "Web: running (PID ${pid}, bind ${WEB_HOST}:${WEB_PORT})"
     else
         info "Web: stopped"
     fi

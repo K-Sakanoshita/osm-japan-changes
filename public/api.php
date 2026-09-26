@@ -50,9 +50,56 @@ try {
     );
 
     $mode = strtolower(trim((string) ($_GET['mode'] ?? 'pois')));
-    $allowedModes = ['pois', 'japan', 'prefectures', 'facets', 'profile', 'mapper_search', 'profile_region_mappers', 'badge_mappers'];
+    $allowedModes = ['pois', 'japan', 'prefectures', 'facets', 'profile', 'mapper_search', 'profile_region_mappers', 'badge_mappers', 'objects'];
     if (!in_array($mode, $allowedModes, true)) {
         throw new InvalidArgumentException('Unsupported mode.');
+    }
+
+    if ($mode === 'objects') {
+        $rawIds = $_GET['ids'] ?? null;
+        if (!is_string($rawIds) || $rawIds === '') {
+            throw new InvalidArgumentException('ids is required.');
+        }
+        $tokens = explode(',', $rawIds);
+        if (count($tokens) > 100) {
+            throw new InvalidArgumentException('ids supports at most 100 objects.');
+        }
+        $ids = [];
+        foreach ($tokens as $token) {
+            if (!preg_match('/^(node|way|relation)\/([1-9][0-9]{0,18})$/D', $token, $match)) {
+                throw new InvalidArgumentException('ids must use type/positive-id format.');
+            }
+            $ids[$match[1] . '/' . $match[2]] = [$match[1], $match[2]];
+        }
+        $clauses = [];
+        $values = [];
+        foreach ($ids as [$type, $id]) {
+            $clauses[] = '(osm_type = ? AND osm_id = ?)';
+            $values[] = $type;
+            $values[] = $id;
+        }
+        $statement = $pdo->prepare(
+            'SELECT osm_type AS type, osm_id AS id, name, osm_timestamp AS date,'
+            . ' created_osm_at AS createdAt, change_action AS action,'
+            . ' changeset_id AS changeset, latitude AS lat, longitude AS lon,'
+            . ' prefecture, municipality_code AS municipalityCode,'
+            . ' municipality_name AS municipalityName, ward_code AS wardCode,'
+            . ' ward_name AS wardName, tags'
+            . ' FROM osm_poi WHERE ' . implode(' OR ', $clauses)
+        );
+        $statement->execute($values);
+        $byId = [];
+        foreach ($statement->fetchAll() as $row) {
+            $byId[$row['type'] . '/' . $row['id']] = $row;
+        }
+        $items = [];
+        foreach (array_keys($ids) as $key) {
+            if (isset($byId[$key])) {
+                $items[] = $byId[$key];
+            }
+        }
+        echo json_encode(['meta' => ['mode' => 'objects'], 'items' => $items], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        exit;
     }
 
     $validDate = static fn(string $value): bool =>
@@ -115,6 +162,41 @@ try {
         'period_end_exclusive' => $periodEndExclusive,
     ];
     $filters = [];
+    $createdFrom = trim((string) ($_GET['created_from'] ?? ''));
+    $createdTo = trim((string) ($_GET['created_to'] ?? ''));
+    $newDaysRaw = $_GET['new_days'] ?? null;
+    $hasCreatedFilter = $createdFrom !== '' || $createdTo !== '' || $newDaysRaw !== null;
+    if ($hasCreatedFilter && $mode !== 'pois') {
+        throw new InvalidArgumentException('Creation date filters are supported only in pois mode.');
+    }
+    if (($createdFrom === '') !== ($createdTo === '') || ($newDaysRaw !== null && $createdFrom !== '')) {
+        throw new InvalidArgumentException('Specify new_days or both created_from and created_to.');
+    }
+    if ($hasCreatedFilter && !array_key_exists('days', $_GET) && $from === '') {
+        $conditions = [];
+        $parameters = [];
+    }
+    if ($newDaysRaw !== null) {
+        if (!is_string($newDaysRaw) || !preg_match('/^[1-9][0-9]*$/D', $newDaysRaw)
+            || (int) $newDaysRaw > 365) {
+            throw new InvalidArgumentException('new_days must be between 1 and 365.');
+        }
+        $conditions[] = 'created_osm_at >= :created_start';
+        $parameters['created_start'] = gmdate('Y-m-d H:i:s', time() - (int) $newDaysRaw * 86400);
+        $filters['new_days'] = (int) $newDaysRaw;
+    } elseif ($createdFrom !== '') {
+        if (!$validDate($createdFrom) || !$validDate($createdTo) || $createdFrom > $createdTo) {
+            throw new InvalidArgumentException('The creation date range is invalid.');
+        }
+        $jst = new DateTimeZone('Asia/Tokyo');
+        $utc = new DateTimeZone('UTC');
+        $conditions[] = 'created_osm_at >= :created_start';
+        $conditions[] = 'created_osm_at < :created_end';
+        $parameters['created_start'] = (new DateTimeImmutable($createdFrom . ' 00:00:00', $jst))->setTimezone($utc)->format('Y-m-d H:i:s');
+        $parameters['created_end'] = (new DateTimeImmutable($createdTo . ' 00:00:00', $jst))->modify('+1 day')->setTimezone($utc)->format('Y-m-d H:i:s');
+        $filters['created_from'] = $createdFrom;
+        $filters['created_to'] = $createdTo;
+    }
 
     $readTextFilter = static function (string $name, int $maximumLength): string {
         $value = trim((string) ($_GET[$name] ?? ''));
@@ -152,6 +234,19 @@ try {
         $conditions[] = 'prefecture = :prefecture';
         $parameters['prefecture'] = $prefecture;
         $filters['prefecture'] = $prefecture;
+    }
+
+    foreach (['municipality_code', 'ward_code'] as $codeFilter) {
+        if (!array_key_exists($codeFilter, $_GET)) {
+            continue;
+        }
+        if ($mode !== 'pois' || !is_string($_GET[$codeFilter])
+            || !preg_match('/^[0-9]{6}$/D', $_GET[$codeFilter])) {
+            throw new InvalidArgumentException($codeFilter . ' must be a six-digit code in pois mode.');
+        }
+        $conditions[] = $codeFilter . ' = :' . $codeFilter;
+        $parameters[$codeFilter] = $_GET[$codeFilter];
+        $filters[$codeFilter] = $_GET[$codeFilter];
     }
 
     $editorUidSource = $_GET['editor_uid'] ?? $_GET['editorUid'] ?? '';
@@ -209,7 +304,6 @@ try {
         }
         // Quote the entire key as one JSONPath member; dots and wildcards are literal.
         $tagPath = '$.' . json_encode($tagKey, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
-        $conditions[] = "osm_type = 'node'";
         $filters['tag_key'] = $tagKey;
         if (array_key_exists('tag_value', $_GET)) {
             $tagValue = $_GET['tag_value'];
@@ -231,11 +325,12 @@ try {
     }
 
     $where = implode(' AND ', $conditions);
+    $updatePeriodApplied = !($hasCreatedFilter && !array_key_exists('days', $_GET) && $from === '');
     $meta = [
         'mode' => $mode,
-        'days' => $days,
-        'periodStart' => $periodStart,
-        'periodEnd' => $periodEnd,
+        'days' => $updatePeriodApplied ? $days : null,
+        'periodStart' => $updatePeriodApplied ? $periodStart : null,
+        'periodEnd' => $updatePeriodApplied ? $periodEnd : null,
         'filters' => $filters,
     ];
 
@@ -616,6 +711,9 @@ try {
             'SELECT osm_type AS type, osm_id AS id, name,'
             . ' category AS type2, category_value AS kind, tags,'
             . ' latitude AS lat, longitude AS lon, prefecture,'
+            . ' municipality_code AS municipalityCode, municipality_name AS municipalityName,'
+            . ' municipality_osm_id AS municipalityOsmId, ward_code AS wardCode,'
+            . ' ward_name AS wardName, ward_osm_id AS wardOsmId, created_osm_at AS createdAt,'
             . ' osm_timestamp AS date, changeset_id AS changeset,'
             . ' editor_uid AS editorUid, editor_name AS editorName,'
             . ' change_action AS action'

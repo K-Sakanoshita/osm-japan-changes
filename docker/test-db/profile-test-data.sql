@@ -447,6 +447,14 @@ INSERT IGNORE INTO osm_poi (
    6000000000000004, 'Test Mapper Boundary', 'create',
    UTC_TIMESTAMP() - INTERVAL 4 HOUR, 6000000000000004, 'Test Mapper Boundary');
 
+-- These three fixtures are in Osaka-shi Kita-ku.
+UPDATE osm_poi
+SET municipality_code = '271004', municipality_name = '大阪市',
+    municipality_osm_id = 358674, ward_code = '271276',
+    ward_name = '北区', ward_osm_id = 358681
+WHERE (osm_type = 'node' AND osm_id IN (8080000000000001, 8080000000000002))
+   OR (osm_type = 'way' AND osm_id = 8080000000000004);
+
 INSERT INTO osm_sync_state (state_key, state_value)
 SELECT 'profile_test_data_version', '9'
 WHERE @profile_seed_allowed

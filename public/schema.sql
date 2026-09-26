@@ -7,6 +7,12 @@ CREATE TABLE IF NOT EXISTS osm_poi (
   latitude DECIMAL(10,7) NOT NULL,
   longitude DECIMAL(10,7) NOT NULL,
   prefecture VARCHAR(64) NULL,
+  municipality_code CHAR(6) NULL,
+  municipality_name VARCHAR(255) NULL,
+  municipality_osm_id BIGINT UNSIGNED NULL,
+  ward_code CHAR(6) NULL,
+  ward_name VARCHAR(255) NULL,
+  ward_osm_id BIGINT UNSIGNED NULL,
   tags JSON NOT NULL,
   osm_timestamp DATETIME NOT NULL,
   changeset_id BIGINT UNSIGNED NOT NULL,
@@ -20,8 +26,11 @@ CREATE TABLE IF NOT EXISTS osm_poi (
   last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (osm_type, osm_id),
   KEY osm_timestamp (osm_timestamp),
+  KEY created_osm_at (created_osm_at),
   KEY category (category),
   KEY prefecture (prefecture),
+  KEY municipality_code (municipality_code),
+  KEY ward_code (ward_code),
   KEY prefecture_timestamp (prefecture, osm_timestamp),
   KEY editor_timestamp (editor_uid, osm_timestamp),
   KEY category_value_timestamp (category, category_value, osm_timestamp)
@@ -61,6 +70,79 @@ SET @prefecture_index_sql = IF(
 PREPARE prefecture_index_statement FROM @prefecture_index_sql;
 EXECUTE prefecture_index_statement;
 DEALLOCATE PREPARE prefecture_index_statement;
+
+-- Municipality columns for databases created before this schema version.
+SET @column_exists = (SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'osm_poi' AND COLUMN_NAME = 'municipality_code');
+SET @column_sql = IF(@column_exists = 0,
+  'ALTER TABLE osm_poi ADD COLUMN municipality_code CHAR(6) NULL', 'SELECT 1');
+PREPARE column_statement FROM @column_sql;
+EXECUTE column_statement;
+DEALLOCATE PREPARE column_statement;
+
+SET @column_exists = (SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'osm_poi' AND COLUMN_NAME = 'municipality_name');
+SET @column_sql = IF(@column_exists = 0,
+  'ALTER TABLE osm_poi ADD COLUMN municipality_name VARCHAR(255) NULL', 'SELECT 1');
+PREPARE column_statement FROM @column_sql;
+EXECUTE column_statement;
+DEALLOCATE PREPARE column_statement;
+
+SET @column_exists = (SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'osm_poi' AND COLUMN_NAME = 'municipality_osm_id');
+SET @column_sql = IF(@column_exists = 0,
+  'ALTER TABLE osm_poi ADD COLUMN municipality_osm_id BIGINT UNSIGNED NULL', 'SELECT 1');
+PREPARE column_statement FROM @column_sql;
+EXECUTE column_statement;
+DEALLOCATE PREPARE column_statement;
+
+SET @column_exists = (SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'osm_poi' AND COLUMN_NAME = 'ward_code');
+SET @column_sql = IF(@column_exists = 0,
+  'ALTER TABLE osm_poi ADD COLUMN ward_code CHAR(6) NULL', 'SELECT 1');
+PREPARE column_statement FROM @column_sql;
+EXECUTE column_statement;
+DEALLOCATE PREPARE column_statement;
+
+SET @column_exists = (SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'osm_poi' AND COLUMN_NAME = 'ward_name');
+SET @column_sql = IF(@column_exists = 0,
+  'ALTER TABLE osm_poi ADD COLUMN ward_name VARCHAR(255) NULL', 'SELECT 1');
+PREPARE column_statement FROM @column_sql;
+EXECUTE column_statement;
+DEALLOCATE PREPARE column_statement;
+
+SET @column_exists = (SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'osm_poi' AND COLUMN_NAME = 'ward_osm_id');
+SET @column_sql = IF(@column_exists = 0,
+  'ALTER TABLE osm_poi ADD COLUMN ward_osm_id BIGINT UNSIGNED NULL', 'SELECT 1');
+PREPARE column_statement FROM @column_sql;
+EXECUTE column_statement;
+DEALLOCATE PREPARE column_statement;
+
+SET @index_exists = (SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'osm_poi' AND INDEX_NAME = 'municipality_code');
+SET @index_sql = IF(@index_exists = 0,
+  'ALTER TABLE osm_poi ADD INDEX municipality_code (municipality_code)', 'SELECT 1');
+PREPARE index_statement FROM @index_sql;
+EXECUTE index_statement;
+DEALLOCATE PREPARE index_statement;
+
+SET @index_exists = (SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'osm_poi' AND INDEX_NAME = 'ward_code');
+SET @index_sql = IF(@index_exists = 0,
+  'ALTER TABLE osm_poi ADD INDEX ward_code (ward_code)', 'SELECT 1');
+PREPARE index_statement FROM @index_sql;
+EXECUTE index_statement;
+DEALLOCATE PREPARE index_statement;
+
+SET @index_exists = (SELECT COUNT(*) FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'osm_poi' AND INDEX_NAME = 'created_osm_at');
+SET @index_sql = IF(@index_exists = 0,
+  'ALTER TABLE osm_poi ADD INDEX created_osm_at (created_osm_at)', 'SELECT 1');
+PREPARE index_statement FROM @index_sql;
+EXECUTE index_statement;
+DEALLOCATE PREPARE index_statement;
 
 -- Composite indexes used by api.php filters and date ranges.
 SET @api_index_exists = (

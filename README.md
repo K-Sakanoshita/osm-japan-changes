@@ -72,13 +72,24 @@ php public/profile-sync.php
 15 3 * * * OSM_APP_CONFIG=/absolute/path/private-osm-config.php php /absolute/path/public/profile-sync.php
 ```
 
-## API
+## APIの使い方
 
-エンドポイントは `public/api.php` です。既定の `mode` は `pois` です。
+エンドポイントは `public/api.php` です。既定の `mode` は `pois` です。ローカルテスト環境を起動した場合は `http://127.0.0.1:8000/api.php` で呼び出せます。例えば、過去30日間に更新された高槻市の地物を取得するには次を実行します。
+
+```shell
+curl 'http://127.0.0.1:8000/api.php?mode=pois&municipality_code=272078&days=30'
+```
+
+市区町村検索は、同期または手動バックフィルで自治体コードが保存された地物を対象にします。ローカルテストDBには高槻市のPOIが含まれないため、上のクエリは `items: []` になります。ローカルで市区町村コード検索を試す場合は、同梱データがある大阪市のコードを使えます。
+
+```shell
+curl 'http://127.0.0.1:8000/api.php?mode=pois&municipality_code=271004&from=2020-01-01&to=2099-12-31&limit=5'
+```
 
 | mode | 内容 |
 |---|---|
 | `pois` | 地物一覧とページングカーソルを返す |
+| `objects` | 指定したOSM IDを最大100件まとめて返す |
 | `japan` | 全国の更新数、マッパー、変更セット、カテゴリ、日別集計 |
 | `prefectures` | 都道府県別件数 |
 | `facets` | マッパーと代表カテゴリの検索候補 |
@@ -104,7 +115,7 @@ php public/profile-sync.php
 
 ### 汎用タグ検索
 
-`mode=pois`では、代表カテゴリとは独立して、`osm_poi.tags`のJSONに保存された全タグを検索できます。初期実装の対象はnodeです。
+`mode=pois`では、代表カテゴリとは独立して、`osm_poi.tags`のJSONに保存された全タグを検索できます。収集済みのnode / way / relationが対象です。
 
 タグキーの存在検索:
 
@@ -126,6 +137,25 @@ php public/profile-sync.php
 
 `tag_value`の単独指定、空の`tag_key`、255文字を超える値、不正なUTF-8、`pois`以外でのタグ指定はHTTP 400になります。キー中のドットやワイルドカード文字はJSONPathの演算子ではなく、タグキーの文字として扱います。
 
+### 作成日時・OSM ID・市区町村コード
+
+`mode=pois` では最終更新日時（`days` / `from` / `to`）に加えて、OSM 上の作成日時（`new_days` または `created_from` / `created_to`）で検索できます。作成日時だけを指定した場合、最終更新日の既定14日条件は適用されません。日付範囲は日本時間の暦日です。応答には `date`（最終更新）と `createdAt`（作成）を含みます。作成日時が不明な既存地物の `createdAt` は null です。
+
+```text
+/api.php?mode=pois&new_days=7&prefecture_code=27&tag_key=playground
+/api.php?mode=pois&created_from=2026-09-18&created_to=2026-09-25&category=leisure&category_value=park
+/api.php?mode=pois&days=7&municipality_code=272078
+/api.php?mode=pois&days=7&municipality_code=271004&ward_code=271276&tag_key=playground
+```
+
+`municipality_code` と `ward_code` は6桁の全国地方公共団体コードで、`mode=pois` のみ対応します。住所情報が判定できない地物や特殊区域では null を返します。タグ検索は収集済みの node / way / relation を対象とします。way / relation は従来の対象タグに加え、`playground=*` と `landuse=recreation_ground` が対象です。
+
+`mode=objects` では最大100件の `node/ID`、`way/ID`、`relation/ID` を一括照会できます。重複を除き、存在する地物だけを入力順で返します。不正な ID 形式は HTTP 400 です。読み取り専用で、既存の CORS 設定を使います。
+
+```text
+/api.php?mode=objects&ids=node/123456,way/987654,relation/12345
+```
+
 ## ローカルテスト
 
 Linux上でDocker Engine、Docker Composeプラグイン、ホスト側のPHPと必要拡張、`curl`、`start-stop-daemon`を用意します。MariaDBとphpMyAdminはコンテナで、PHP開発サーバーはホストで動き、作業ツリーを直接参照します。起動時にスキーマを適用し、テストデータのバージョンが変わった場合に投入し、プロフィール集計を更新します。
@@ -133,11 +163,23 @@ Linux上でDocker Engine、Docker Composeプラグイン、ホスト側のPHPと
 ```shell
 ./scripts/test-env-docker.sh start
 ./scripts/test-api.sh
+php scripts/test-municipalities.php
 ./scripts/test-env-docker.sh status
 ./scripts/test-env-docker.sh stop
 ```
 
 既定URLはAPIが `http://127.0.0.1:8000/api.php`、phpMyAdminが `http://127.0.0.1:8081/`、MariaDBが `127.0.0.1:3307` です。ポートは `WEB_PORT`、`PHPMYADMIN_PORT`、`MYSQL_PORT`で変更できます。DBデータはDocker volumeに保持され、`stop`でも削除されません。PHPサーバーの既定の待受は `0.0.0.0` です。このPCだけで利用する場合は `WEB_HOST=127.0.0.1 ./scripts/test-env-docker.sh start` とします。
+
+既定の `3307` または `8081` が別のDocker環境で使用中なら、空いているポートを指定します。例えば次の設定ではAPIは既定の `8000` のままなので、`test-api.sh` に追加設定は不要です。
+
+```shell
+MYSQL_PORT=13307 PHPMYADMIN_PORT=18081 ./scripts/test-env-docker.sh start
+./scripts/test-api.sh
+MYSQL_PORT=13307 PHPMYADMIN_PORT=18081 ./scripts/test-env-docker.sh status
+MYSQL_PORT=13307 PHPMYADMIN_PORT=18081 ./scripts/test-env-docker.sh stop
+```
+
+Dockerの `buildx isn't installed` 警告が表示されても、起動が完了していればテストを実行できます。起動に失敗した場合はAPIサーバーも立ち上がらないため、ポートの競合を解消してから `test-api.sh` を実行してください。
 
 APIのポートを変更した場合、テストにも `API_URL=http://127.0.0.1:変更したポート/api.php` を指定してください。テストは同梱データと既定のCORS設定を前提とします。ログは `./scripts/test-env-docker.sh logs`、SQLの取り込みは `./scripts/test-env-docker.sh import /path/to/dump.sql` で実行できます。
 
@@ -148,6 +190,49 @@ APIのポートを変更した場合、テストにも `API_URL=http://127.0.0.1
 ./scripts/test-env.sh status
 ./scripts/test-env.sh stop
 ```
+
+## 行政界データの更新
+
+`scripts/build-municipalities.sh` は OSM 行政界を取得し、mapshaper の topology-aware な5%簡略化、bbox 再計算、e-Stat 標準地域コードCSVとの突合を順に実行します。必要なコマンドは `curl`、`jq`、`osmtogeojson`、`mapshaper`、`python3`（`shapely` を含む）です。既定のCSVは `scripts/FEA_hyoujun-20260926112545.csv` で、別CSVのパスを第1引数に指定できます。
+
+```shell
+./scripts/build-municipalities.sh
+php scripts/test-municipalities.php
+```
+
+生成結果は `public/data/municipalities.min.geojson` に保存され、通常同期ではこのローカルファイルを1回読み込みます。生成時の大きな中間ファイルは一時ディレクトリから削除されます。既存POIの補完は専用のバックフィルコマンドで行い、通常の6分同期に全件処理を加えません。バックフィルは現在の行政界データで全POIを再判定するため、行政界を更新した後にも再実行できます。
+
+### 既存POIの地域情報を補完する
+
+`scripts/backfill-regions.sh` は、未設定の都道府県を補完してから、既存POIの市区町村・区情報を再判定します。通常同期とは別に手動実行します。ローカルテストDBに適用する場合は、テスト環境を起動したうえで接続設定とDBポートを指定してください。
+
+```shell
+OSM_APP_CONFIG="$PWD/docker/test-host/private-osm-test-config.php" OSM_TEST_DB_PORT=13307 ./scripts/backfill-regions.sh
+```
+
+本番DBに適用する場合は、本番用の `OSM_APP_CONFIG` を指定します。都道府県だけの補完には `php scripts/backfill-prefectures.php` を使用でき、`--dry-run` では更新せず対象件数を確認できます。市区町村だけを再判定する場合は `php scripts/backfill-municipalities.php` を使用します。バックフィルは地物を新たに収集しないため、対象地域のPOIがDBに存在しなければAPIの結果は増えません。
+
+### FTPで公開ディレクトリだけを配置している場合
+
+本番の `public/` の中身を `/home/armd-01/www/osm-japan-changes/` に配置している場合、管理用スクリプトはWeb公開ディレクトリの外に置きます。FTPソフトの開始フォルダが `www` なら、ホームディレクトリ `/home/armd-01/` へ移動し、`maintenance/scripts/` を作って次の3ファイルをアップロードします。
+
+```text
+/home/armd-01/maintenance/scripts/backfill-regions.sh
+/home/armd-01/maintenance/scripts/backfill-prefectures.php
+/home/armd-01/maintenance/scripts/backfill-municipalities.php
+```
+
+公開先には最新版の `bootstrap.php`、`prefecture-lib.php`、`municipality-lib.php`、`data/prefectures.min.geojson`、`data/municipalities.min.geojson` が必要です。SSHでログイン後、bashから公開先と非公開設定ファイルのパスを指定して実行します。
+
+```shell
+bash
+export OSM_PUBLIC_DIR="$HOME/www/osm-japan-changes"
+export OSM_APP_CONFIG="$HOME/private-osm-config.php"
+php -v
+bash "$HOME/maintenance/scripts/backfill-regions.sh"
+```
+
+`OSM_PUBLIC_DIR` は `api.php` と `bootstrap.php` が置かれたディレクトリを指定します。PHP CLIとSSHが利用できない契約では、このCLIスクリプトはFTPアップロードだけでは実行できません。
 
 ## 管理画面
 
@@ -166,7 +251,9 @@ APIのポートを変更した場合、テストにも `API_URL=http://127.0.0.1
 | `public/data/prefectures.min.geojson` | 都道府県判定用ポリゴン |
 | `private-osm-config.example.php` | 非公開設定の例 |
 | `scripts/test-env-docker.sh` | Dockerテスト環境 |
-| `scripts/test-api.sh` | 汎用タグ検索とCORSの結合テスト |
+| `scripts/test-api.sh` | API検索とCORSの結合テスト |
+| `scripts/test-municipalities.php` | 実データを使う市区町村判定テスト |
+| `scripts/backfill-regions.sh` | 既存POIの都道府県・市区町村情報を補完 |
 
 ## ライセンス
 

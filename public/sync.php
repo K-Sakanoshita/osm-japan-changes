@@ -17,6 +17,9 @@ if ($lockHandle === false || !flock($lockHandle, LOCK_EX | LOCK_NB)) {
 }
 
 $config = require __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/municipality-lib.php';
+require_once __DIR__ . '/prefecture-lib.php';
+$municipalityLocator = new MunicipalityLocator(__DIR__ . '/data/municipalities.min.geojson');
 $osmUserAgent = trim((string) ($config['osm_user_agent'] ?? 'osm-japan-changes/1.0'));
 $fullResponseMaxBytes = max(262144, (int) ($config['osm_full_max_bytes'] ?? 2 * 1024 * 1024));
 $httpContext = stream_context_create([
@@ -70,14 +73,14 @@ $readTags = static function (SimpleXMLElement $element): array {
     }
     return $tags;
 };
-$targetAreaKeys = ['amenity', 'shop', 'tourism', 'leisure'];
+$targetAreaKeys = ['amenity', 'shop', 'tourism', 'leisure', 'playground'];
 $findTargetAreaCategory = static function (array $tags) use ($targetAreaKeys): ?string {
     foreach ($targetAreaKeys as $key) {
         if (array_key_exists($key, $tags)) {
             return $key;
         }
     }
-    return null;
+    return ($tags['landuse'] ?? null) === 'recreation_ground' ? 'landuse' : null;
 };
 $nodeLocationsFromXml = static function (SimpleXMLElement $xml): array {
     $locations = [];
@@ -171,94 +174,8 @@ $isExcludedForeignArea = static function (float $lat, float $lon): bool {
         || $isRussianKurilsSouth;
 };
 
-$prefectureGeoJsonPath = __DIR__ . '/data/prefectures.min.geojson';
-$prefectureGeoJsonSource = file_get_contents($prefectureGeoJsonPath);
-if ($prefectureGeoJsonSource === false) {
-    throw new RuntimeException('Prefecture GeoJSON could not be read.');
-}
-$prefectureGeoJson = json_decode($prefectureGeoJsonSource, true, 512, JSON_THROW_ON_ERROR);
-if (($prefectureGeoJson['type'] ?? '') !== 'FeatureCollection' || !isset($prefectureGeoJson['features']) || !is_array($prefectureGeoJson['features'])) {
-    throw new RuntimeException('Prefecture GeoJSON is invalid.');
-}
-
-$pointInRing = static function (float $lon, float $lat, array $ring): bool {
-    $inside = false;
-    $count = count($ring);
-    if ($count < 3) {
-        return false;
-    }
-    for ($i = 0, $j = $count - 1; $i < $count; $j = $i++) {
-        $xi = (float) $ring[$i][0];
-        $yi = (float) $ring[$i][1];
-        $xj = (float) $ring[$j][0];
-        $yj = (float) $ring[$j][1];
-        if (($yi > $lat) !== ($yj > $lat)
-            && $lon < ($xj - $xi) * ($lat - $yi) / ($yj - $yi) + $xi) {
-            $inside = !$inside;
-        }
-    }
-    return $inside;
-};
-$pointInPolygon = static function (float $lon, float $lat, array $polygon) use ($pointInRing): bool {
-    if (!$polygon || !$pointInRing($lon, $lat, $polygon[0])) {
-        return false;
-    }
-    foreach (array_slice($polygon, 1) as $hole) {
-        if ($pointInRing($lon, $lat, $hole)) {
-            return false;
-        }
-    }
-    return true;
-};
-
-$prefectureAreas = [];
-foreach ($prefectureGeoJson['features'] as $feature) {
-    $properties = $feature['properties'] ?? [];
-    $geometry = $feature['geometry'] ?? [];
-    $name = trim((string) ($properties['name:ja'] ?? $properties['name'] ?? ''));
-    $type = (string) ($geometry['type'] ?? '');
-    $coordinates = $geometry['coordinates'] ?? null;
-    if ($name === '' || !in_array($type, ['Polygon', 'MultiPolygon'], true) || !is_array($coordinates)) {
-        continue;
-    }
-    $bounds = [INF, INF, -INF, -INF];
-    $visitCoordinates = static function (array $values) use (&$visitCoordinates, &$bounds): void {
-        if (isset($values[0], $values[1]) && is_numeric($values[0]) && is_numeric($values[1])) {
-            $bounds[0] = min($bounds[0], (float) $values[0]);
-            $bounds[1] = min($bounds[1], (float) $values[1]);
-            $bounds[2] = max($bounds[2], (float) $values[0]);
-            $bounds[3] = max($bounds[3], (float) $values[1]);
-            return;
-        }
-        foreach ($values as $value) {
-            if (is_array($value)) {
-                $visitCoordinates($value);
-            }
-        }
-    };
-    $visitCoordinates($coordinates);
-    if (is_finite($bounds[0])) {
-        $prefectureAreas[] = compact('name', 'type', 'coordinates', 'bounds');
-    }
-}
-if (count($prefectureAreas) !== 47) {
-    throw new RuntimeException('Prefecture GeoJSON must contain 47 usable prefectures.');
-}
-$findPrefecture = static function (float $lat, float $lon) use ($prefectureAreas, $pointInPolygon): ?string {
-    foreach ($prefectureAreas as $area) {
-        [$minAreaLon, $minAreaLat, $maxAreaLon, $maxAreaLat] = $area['bounds'];
-        if ($lon < $minAreaLon || $lon > $maxAreaLon || $lat < $minAreaLat || $lat > $maxAreaLat) {
-            continue;
-        }
-        $polygons = $area['type'] === 'Polygon' ? [$area['coordinates']] : $area['coordinates'];
-        foreach ($polygons as $polygon) {
-            if ($pointInPolygon($lon, $lat, $polygon)) {
-                return $area['name'];
-            }
-        }
-    }
-    return null;
-};
+$prefectureLocator = new PrefectureLocator(__DIR__ . '/data/prefectures.min.geojson');
+$findPrefecture = static fn(float $lat, float $lon): ?string => $prefectureLocator->locate($lat, $lon);
 // Older installations limited category to ENUM('amenity','shop').  Any OSM
 // tag key can now be used as the representative category, so widen the two
 // display columns once when this version is first run.
@@ -270,6 +187,8 @@ $prefectureColumn = $pdo->query("SHOW COLUMNS FROM osm_poi LIKE 'prefecture'")->
 if (!$prefectureColumn) {
     $pdo->exec('ALTER TABLE osm_poi ADD prefecture VARCHAR(64) NULL AFTER longitude, ADD KEY prefecture (prefecture)');
 }
+
+ensureMunicipalityColumns($pdo);
 
 // Remove foreign rows stored by older versions once. The state flag avoids a
 // full-table DELETE check on every six-minute cron invocation.
@@ -300,7 +219,7 @@ if (!$cursorValue) {
         $pdo->exec("DELETE FROM osm_sync_state WHERE state_key='last_sync_at'");
     }
 }
-$upsert = $pdo->prepare('INSERT INTO osm_poi (osm_type,osm_id,name,category,category_value,latitude,longitude,prefecture,tags,osm_timestamp,changeset_id,editor_uid,editor_name,change_action,created_osm_at,creator_uid,creator_name) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name),category=VALUES(category),category_value=VALUES(category_value),latitude=VALUES(latitude),longitude=VALUES(longitude),prefecture=VALUES(prefecture),tags=VALUES(tags),osm_timestamp=VALUES(osm_timestamp),changeset_id=VALUES(changeset_id),editor_uid=VALUES(editor_uid),editor_name=VALUES(editor_name),change_action=VALUES(change_action),created_osm_at=COALESCE(created_osm_at,VALUES(created_osm_at)),creator_uid=COALESCE(creator_uid,VALUES(creator_uid)),creator_name=COALESCE(creator_name,VALUES(creator_name))');
+$upsert = $pdo->prepare('INSERT INTO osm_poi (osm_type,osm_id,name,category,category_value,latitude,longitude,prefecture,municipality_code,municipality_name,municipality_osm_id,ward_code,ward_name,ward_osm_id,tags,osm_timestamp,changeset_id,editor_uid,editor_name,change_action,created_osm_at,creator_uid,creator_name) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name),category=VALUES(category),category_value=VALUES(category_value),latitude=VALUES(latitude),longitude=VALUES(longitude),prefecture=VALUES(prefecture),municipality_code=VALUES(municipality_code),municipality_name=VALUES(municipality_name),municipality_osm_id=VALUES(municipality_osm_id),ward_code=VALUES(ward_code),ward_name=VALUES(ward_name),ward_osm_id=VALUES(ward_osm_id),tags=VALUES(tags),osm_timestamp=VALUES(osm_timestamp),changeset_id=VALUES(changeset_id),editor_uid=VALUES(editor_uid),editor_name=VALUES(editor_name),change_action=VALUES(change_action),created_osm_at=COALESCE(created_osm_at,VALUES(created_osm_at)),creator_uid=COALESCE(creator_uid,VALUES(creator_uid)),creator_name=COALESCE(creator_name,VALUES(creator_name))');
 $deletePoi = $pdo->prepare('DELETE FROM osm_poi WHERE osm_type=? AND osm_id=?');
 $saveCursor = $pdo->prepare("INSERT INTO osm_sync_state (state_key,state_value) VALUES ('sync_cursor_at',?) ON DUPLICATE KEY UPDATE state_value=VALUES(state_value)");
 $saveCompleted = $pdo->prepare("INSERT INTO osm_sync_state (state_key,state_value) VALUES ('last_sync_at',?) ON DUPLICATE KEY UPDATE state_value=VALUES(state_value)");
@@ -324,7 +243,7 @@ $unresolvedGeometry = 0;
 $bbox = array_map('floatval', explode(',', $config['bbox']));
 [$minLon, $minLat, $maxLon, $maxLat] = $bbox;
 $categoryPriority = [
-    'amenity', 'shop', 'tourism', 'historic', 'leisure', 'golf', 'office',
+    'amenity', 'shop', 'tourism', 'historic', 'leisure', 'playground', 'golf', 'office',
     'craft', 'man_made', 'public_transport', 'healthcare',
     'emergency', 'sport', 'highway', 'traffic_calming', 'railway', 'aeroway', 'place',
     'natural', 'landuse', 'building', 'power', 'waterway', 'barrier',
@@ -343,7 +262,7 @@ $savePoi = static function (
     array $point,
     SimpleXMLElement $changeset,
     string $changeAction
-) use ($upsert, $findPrefecture, &$saved, &$savedByType): void {
+) use ($upsert, $findPrefecture, $municipalityLocator, &$saved, &$savedByType): void {
     [$lon, $lat] = $point;
     $timestampSource = (string) $element['timestamp'];
     if ($timestampSource === '') {
@@ -354,6 +273,8 @@ $savePoi = static function (
         ? (int) $element['uid']
         : (isset($changeset['uid']) ? (int) $changeset['uid'] : null);
     $editorName = (string) ($element['user'] ?? $changeset['user'] ?? '');
+    $prefecture = $findPrefecture($lat, $lon);
+    $municipality = $municipalityLocator->locate($lat, $lon, $prefecture);
     $upsert->execute([
         $type,
         (int) $element['id'],
@@ -362,7 +283,8 @@ $savePoi = static function (
         mb_substr($tags[$category], 0, 255),
         $lat,
         $lon,
-        $findPrefecture($lat, $lon),
+        $prefecture,
+        ...$municipality,
         json_encode($tags, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
         $timestamp,
         (int) $changeset['id'],
@@ -513,7 +435,9 @@ while (
             $relationId = (int) $relation['id'];
             $tags = $readTags($relation);
             $category = $findTargetAreaCategory($tags);
-            if ($category === null || ($tags['type'] ?? '') !== 'multipolygon') {
+            if ($category === null || (($tags['type'] ?? '') !== 'multipolygon'
+                && !array_key_exists('playground', $tags)
+                && ($tags['landuse'] ?? null) !== 'recreation_ground')) {
                 $removePoi('relation', $relationId);
                 continue;
             }
