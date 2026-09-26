@@ -63,13 +63,33 @@ final class MunicipalityLocator
 
     public function locate(float $lat, float $lon, ?string $prefecture): array
     {
+        return $this->locateWithPrefecture($lat, $lon, $prefecture)['municipality'];
+    }
+
+    public function locateWithPrefecture(float $lat, float $lon, ?string $prefecture): array
+    {
         $matches = [];
-        $groups = $prefecture !== null && isset($this->areas[$prefecture]) ? [$this->areas[$prefecture]] : array_values($this->areas);
+        $usedNationwideFallback = false;
+        $groups = $prefecture !== null ? [$this->areas[$prefecture] ?? []] : array_values($this->areas);
         foreach ($groups as $group) {
             foreach ($group as [$p, $bbox, $polygons]) {
                 [$west, $south, $east, $north] = $bbox;
                 if ($lon >= $west - 0.00001 && $lon <= $east + 0.00001 && $lat >= $south - 0.00001 && $lat <= $north + 0.00001 && self::contains($lon, $lat, $polygons)) {
                     $matches[(int) $p['admin_level']][] = $p;
+                }
+            }
+        }
+        if ($prefecture !== null && count($matches[7] ?? []) === 0 && count($matches[8] ?? []) === 0) {
+            $usedNationwideFallback = true;
+            foreach ($this->areas as $name => $group) {
+                if ($name === $prefecture) {
+                    continue;
+                }
+                foreach ($group as [$p, $bbox, $polygons]) {
+                    [$west, $south, $east, $north] = $bbox;
+                    if ($lon >= $west - 0.00001 && $lon <= $east + 0.00001 && $lat >= $south - 0.00001 && $lat <= $north + 0.00001 && self::contains($lon, $lat, $polygons)) {
+                        $matches[(int) $p['admin_level']][] = $p;
+                    }
                 }
             }
         }
@@ -81,7 +101,18 @@ final class MunicipalityLocator
         if ($municipality === null && $ward !== null && !empty($ward['parent_osm_id'])) {
             $municipality = ['name' => $ward['parent_name'] ?? null, 'osm_id' => $ward['parent_osm_id'], 'local_government_code' => $ward['parent_local_government_code'] ?? null];
         }
-        return [$municipality['local_government_code'] ?? null, $municipality['name'] ?? null, $municipality['osm_id'] ?? null, $ward['local_government_code'] ?? null, $ward['name'] ?? null, $ward['osm_id'] ?? null];
+        if ($usedNationwideFallback) {
+            $matchedCode = $municipality['local_government_code'] ?? $ward['local_government_code'] ?? null;
+            $matchedPrefectureCode = $municipality['prefecture_code'] ?? $ward['prefecture_code'] ?? null;
+            $matchedPrefectureName = $municipality['prefecture_name'] ?? $ward['prefecture_name'] ?? null;
+            if (is_string($matchedCode) && substr($matchedCode, 0, 2) === $matchedPrefectureCode && is_string($matchedPrefectureName)) {
+                $prefecture = $matchedPrefectureName;
+            }
+        }
+        return [
+            'prefecture' => $prefecture,
+            'municipality' => [$municipality['local_government_code'] ?? null, $municipality['name'] ?? null, $municipality['osm_id'] ?? null, $ward['local_government_code'] ?? null, $ward['name'] ?? null, $ward['osm_id'] ?? null],
+        ];
     }
 }
 

@@ -28,15 +28,15 @@ $lastId = 0;
 $updated = 0;
 $types = ['node', 'way', 'relation'];
 $select = $pdo->prepare('SELECT osm_type, osm_id, latitude, longitude, prefecture FROM osm_poi WHERE osm_type = ? AND osm_id > ? ORDER BY osm_id LIMIT 500');
-$update = $pdo->prepare('UPDATE osm_poi SET municipality_code=?, municipality_name=?, municipality_osm_id=?, ward_code=?, ward_name=?, ward_osm_id=? WHERE osm_type=? AND osm_id=?');
+$update = $pdo->prepare('UPDATE osm_poi SET prefecture=?, municipality_code=?, municipality_name=?, municipality_osm_id=?, ward_code=?, ward_name=?, ward_osm_id=? WHERE osm_type=? AND osm_id=?');
 foreach ($types as $type) {
     $lastId = 0;
     do {
         $select->execute([$type, $lastId]);
         $rows = $select->fetchAll();
         foreach ($rows as $row) {
-            $values = $locator->locate((float) $row['latitude'], (float) $row['longitude'], $row['prefecture']);
-            $update->execute([...$values, $type, $row['osm_id']]);
+            $location = $locator->locateWithPrefecture((float) $row['latitude'], (float) $row['longitude'], $row['prefecture']);
+            $update->execute([$location['prefecture'], ...$location['municipality'], $type, $row['osm_id']]);
             $lastId = (int) $row['osm_id'];
             $updated++;
         }

@@ -274,7 +274,9 @@ $savePoi = static function (
         : (isset($changeset['uid']) ? (int) $changeset['uid'] : null);
     $editorName = (string) ($element['user'] ?? $changeset['user'] ?? '');
     $prefecture = $findPrefecture($lat, $lon);
-    $municipality = $municipalityLocator->locate($lat, $lon, $prefecture);
+    $location = $municipalityLocator->locateWithPrefecture($lat, $lon, $prefecture);
+    $prefecture = $location['prefecture'];
+    $municipality = $location['municipality'];
     $upsert->execute([
         $type,
         (int) $element['id'],
